@@ -27,35 +27,14 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        fenixToolchain = fenix.packages.${system}.fromToolchainName {
-          name = "nightly-2025-05-22";
-          sha256 = "sha256-vQPZDFzFEkHKrsHZpRpxt7zHvaVLtWTTY70bo85vdRU=";
+        toolchain = fenix.packages.${system}.fromToolchainFile {
+          file = ./rust-toolchain.toml;
+          sha256 = "sha256-wBCNU5N9ftXKTMzvUW3xolIXmK5Z/93SdAxK1sMRDxQ=";
         };
 
-        toolchain = fenixToolchain.completeToolchain;
+        craneLib = (crane.mkLib pkgs).overrideToolchain (_: toolchain);
 
-        craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
-
-        commonArgs = {
-          src = craneLib.cleanCargoSource ./.;
-          strictDeps = true;
-
-          buildInputs = [
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [ ];
-        };
-
-        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-
-        nbtworkbench = craneLib.buildPackage (
-          commonArgs
-          // {
-            inherit cargoArtifacts;
-          }
-        );
-
-        libPath = with pkgs; lib.makeLibraryPath [
-
-          # wayland and x11 stuff
+        linuxRuntimeLibs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (with pkgs; [
           libX11
           libXcursor
           libXrandr
@@ -64,7 +43,41 @@
           libxkbcommon
           vulkan-loader
           wayland
-        ];
+        ]);
+
+        linuxDialogPackages = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (with pkgs; [
+          yad
+          zenity
+          kdePackages.kdialog
+        ]);
+
+        libPath = pkgs.lib.makeLibraryPath linuxRuntimeLibs;
+        dialogPath = pkgs.lib.makeBinPath linuxDialogPackages;
+
+        commonArgs = {
+          src = craneLib.path ./.;
+          strictDeps = true;
+
+          buildInputs = [
+          ]
+          ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ ];
+        };
+
+        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+
+        nbtworkbench = craneLib.buildPackage (
+          commonArgs
+          // {
+            inherit cargoArtifacts;
+
+            nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.makeWrapper ];
+            postFixup = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+              wrapProgram "$out/bin/nbtworkbench" \
+                --prefix LD_LIBRARY_PATH : "${libPath}" \
+                --prefix PATH : "${dialogPath}"
+            '';
+          }
+        );
 
       in
       {
@@ -82,20 +95,14 @@
           packages = [
             pkgs.llvmPackages.libcxxClang
             pkgs.llvmPackages.bintools # lld
-
-            # dialogs
-            pkgs.yad
-            pkgs.zenity
-            pkgs.kdePackages.kdialog
-          ];
+          ] ++ linuxDialogPackages;
 
           LD_LIBRARY_PATH = libPath;
 
-          RUST_SRC_PATH = "${fenixToolchain.rust-src}/lib/rustlib/src/rust/library";
+          RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
 
           RUSTFLAGS = "-Clink-arg=-fuse-ld=lld";
         };
       }
     );
 }
-
