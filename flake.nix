@@ -35,6 +35,7 @@
         craneLib = (crane.mkLib pkgs).overrideToolchain (_: toolchain);
 
         linuxRuntimeLibs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (with pkgs; [
+          dbus
           libX11
           libXcursor
           libXrandr
@@ -46,9 +47,7 @@
         ]);
 
         linuxDialogPackages = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (with pkgs; [
-          yad
           zenity
-          kdePackages.kdialog
         ]);
 
         libPath = pkgs.lib.makeLibraryPath linuxRuntimeLibs;

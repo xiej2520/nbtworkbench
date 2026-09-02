@@ -197,19 +197,13 @@ impl Tab {
 				NbtFileFormat::LittleEndianNbt => 4,
 				NbtFileFormat::LittleEndianHeaderNbt => 5,
 			};
-			let dialog = native_dialog::FileDialogBuilder::default()
-				.add_filter(Self::FILE_TYPE_FILTERS[initial_index].0, Self::FILE_TYPE_FILTERS[initial_index].1)
-				.add_filters(
-					Self::FILE_TYPE_FILTERS
-						.iter()
-						.copied()
-						.map(|(a, b)| (a.to_owned(), b.iter().map(|x| x.to_string()).collect::<Vec<_>>()))
-						.enumerate()
-						.filter(|(idx, _)| *idx != initial_index)
-						.map(|(_, x)| x),
-				)
-				.save_single_file();
-			let Ok(Some(path)) = dialog.show() else { return Ok(()) };
+			let mut dialog = rfd::FileDialog::new().add_filter(Self::FILE_TYPE_FILTERS[initial_index].0, Self::FILE_TYPE_FILTERS[initial_index].1);
+			for (idx, (name, extensions)) in Self::FILE_TYPE_FILTERS.iter().copied().enumerate() {
+				if idx != initial_index {
+					dialog = dialog.add_filter(name, extensions);
+				}
+			}
+			let Some(path) = dialog.save_file() else { return Ok(()) };
 			std::fs::write(&path, self.format.encode(&self.root))?;
 			self.path.set_path(path)?;
 			self.history.on_save();
@@ -604,13 +598,16 @@ impl Tab {
 
 	#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 	pub fn from_file_dialog(window_dims: PhysicalSize<u32>) -> Result<Self, TabFromFileDialogError> {
-		let dialog = native_dialog::FileDialogBuilder::default()
-			.set_location("~/Downloads")
-			.add_filters(Tab::FILE_TYPE_FILTERS.iter().copied().map(|(a, b)| (a.to_owned(), b.iter().map(|x| x.to_string()).collect::<Vec<_>>())))
-			.open_single_file();
-		let dialog_result = dialog.show();
+		let mut dialog = rfd::FileDialog::new();
+		if let Some(downloads) = dirs::download_dir() {
+			dialog = dialog.set_directory(downloads);
+		}
+		for (name, extensions) in Tab::FILE_TYPE_FILTERS.iter().copied() {
+			dialog = dialog.add_filter(name, extensions);
+		}
+		let path = dialog.pick_file();
 		window_properties().ignore_events_for(Duration::from_millis(50));
-		let path = dialog_result?.ok_or(TabFromFileDialogError::NoSelection)?;
+		let path = path.ok_or(TabFromFileDialogError::NoSelection)?;
 		let bytes = std::fs::read(&path)?;
 		let tab = Self::new_from_path(&path, &bytes, window_dims)?;
 		Ok(tab)
@@ -914,8 +911,6 @@ pub struct InvalidRootVariantError;
 pub enum TabFromFileDialogError {
 	#[error("No selected file from file dialog")]
 	NoSelection,
-	#[error(transparent)]
-	FileDialog(#[from] native_dialog::Error),
 	#[error(transparent)]
 	IO(#[from] std::io::Error),
 	#[error(transparent)]
